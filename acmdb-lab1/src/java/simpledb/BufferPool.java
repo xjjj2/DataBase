@@ -102,7 +102,7 @@ public class BufferPool {
     			return pg;
     		}
     		else {
-    			evictPage();
+    			buffer.clear();
     			// to evict page
     			DbFile db=cata.getDatabaseFile(pid.getTableId());
     			Page pg=db.readPage(pid);
@@ -176,7 +176,6 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
-    	Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
     }
 
     /**
@@ -192,12 +191,10 @@ public class BufferPool {
      * @param tid the transaction deleting the tuple.
      * @param t the tuple to delete
      */
-    public void deleteTuple(TransactionId tid, Tuple t)
+    public  void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
-    	Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
-    	
     }
 
     /**
@@ -208,9 +205,7 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-    	for (PageId pid:buffer.keySet()) {
-    		flushPage(pid);
-    	}
+
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -224,14 +219,6 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
-    	try {
-			flushPage(pid);
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-    	buffer.remove(pid);
-    	// TODO maybe a flush
     }
 
     /**
@@ -239,13 +226,6 @@ public class BufferPool {
      * @param pid an ID indicating the page to flush
      */
     private synchronized  void flushPage(PageId pid) throws IOException {
-    	if (!buffer.containsKey(pid)) return;
-    	bufferunit unit=buffer.get(pid);
-    	if (unit.pin>0||unit.lock) return;
-    	if (unit.dirty) {
-    		Page pg=unit.page;
-    		Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
-    	}
         // some code goes here
         // not necessary for lab1
     }
@@ -262,15 +242,6 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-    	PageId pidar[]=new PageId[pagenum];
-    	buffer.keySet().toArray(pidar);
-    	int rn=(int)(Math.random()*pagenum);
-    	try {
-			flushPage(pidar[rn]);
-		} catch (IOException e) {
-			throw new DbException("error when evict page");
-		}
-    	buffer.remove(pidar[rn]);
         // some code goes here
         // not necessary for lab1
     }
