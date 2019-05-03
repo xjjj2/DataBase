@@ -30,7 +30,17 @@ public class Tuple implements Serializable {
     	rid=null;
     	for (int i=0;i<td.numFields();++i) Fields.add(null);
     }
-
+    @Override
+    public boolean equals(Object o) {
+    	if(!(o instanceof Tuple)) return false;
+    	Tuple tp=(Tuple) o;
+    	if (!td.equals(tp.td)) return false;
+    	if (!rid.equals(tp.rid)) return false;
+    	for (int i=0;i<Fields.size();++i) {
+    		if (!Fields.get(i).compare(Predicate.Op.EQUALS, tp.Fields.get(i))) return false;
+    	}
+    	return true;
+    }
     /**
      * @return The TupleDesc representing the schema of this tuple.
      */

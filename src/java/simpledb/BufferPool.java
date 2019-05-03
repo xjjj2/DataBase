@@ -1,7 +1,7 @@
 package simpledb;
 
 import java.io.*;
-
+import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -176,7 +176,13 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
-    	Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
+    	ArrayList<Page> dirty=Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
+    	for (Page pg:dirty) {
+    		if (!buffer.containsKey(pg.getId()))
+    			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+    		else buffer.get(pg.getId()).dirty=true;
+    	}
+    	
     }
 
     /**
@@ -196,8 +202,12 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
-    	Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
-    	
+    	ArrayList<Page> dirty=Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
+    	for (Page pg:dirty) {
+    		if (!buffer.containsKey(pg.getId()))
+    			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+    		else buffer.get(pg.getId()).dirty=true;
+    	}
     }
 
     /**
@@ -246,6 +256,7 @@ public class BufferPool {
     		Page pg=unit.page;
     		Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
     	}
+    	unit.dirty=false;
         // some code goes here
         // not necessary for lab1
     }
