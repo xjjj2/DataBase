@@ -51,10 +51,12 @@ public class Catalog {
      */
     public void addTable(DbFile file, String name, String pkeyField) {
         // some code goes here
-    	dbcata.put(file.getId(), file);
-    	namecata.put(file.getId(), name);
-    	pkeycata.put(file.getId(), pkeyField);
-    	idname.put(name, file.getId());
+    	
+    		dbcata.put(file.getId(), file);
+    		namecata.put(file.getId(), name);
+    		pkeycata.put(file.getId(), pkeyField);
+    		idname.put(name, file.getId());
+    	
     }
 
     public void addTable(DbFile file, String name) {

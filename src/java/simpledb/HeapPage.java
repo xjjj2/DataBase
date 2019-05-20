@@ -18,7 +18,9 @@ public class HeapPage implements Page {
     final byte header[];
     final Tuple tuples[];
     final int numSlots;
-
+    protected volatile boolean dirty = false;
+    protected volatile TransactionId dirtier = null;
+    
     byte[] oldData;
     private final Byte oldDataLock=new Byte((byte)0);
     private int countbyte(byte t) {
@@ -257,6 +259,9 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+    	if (!t.getRecordId().getPageId().equals(pid) || !isSlotUsed(t.getRecordId().tupleno())) throw new DbException("error from heappage deletetuple");
+    	tuples[t.getRecordId().tupleno()]=null;
+    	markSlotUsed(t.getRecordId().tupleno(),false);
     }
 
     /**
@@ -269,6 +274,18 @@ public class HeapPage implements Page {
     public void insertTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+    	if (!t.getTupleDesc().equals(td) || getNumEmptySlots()==0) throw new DbException("insert to heap page fault");
+    	int i=0;
+    	while (true) {
+    		if (!isSlotUsed(i)) {
+    			RecordId rid=new RecordId(pid, i);
+    			t.setRecordId(rid);
+    			markSlotUsed(i,true);
+    			tuples[i]=t;
+    			break;
+    		}
+    		++i;
+    	}
     }
 
     /**
@@ -277,6 +294,8 @@ public class HeapPage implements Page {
      */
     public void markDirty(boolean dirty, TransactionId tid) {
         // some code goes here
+    	this.dirty=dirty;
+    	dirtier=tid;
 	// not necessary for lab1
     }
 
@@ -286,7 +305,9 @@ public class HeapPage implements Page {
     public TransactionId isDirty() {
         // some code goes here
 	// Not necessary for lab1
-        return null;      
+    	if (dirty)
+    		return dirtier;
+    	else return null;
     }
 
     /**
@@ -320,6 +341,19 @@ public class HeapPage implements Page {
     private void markSlotUsed(int i, boolean value) {
         // some code goes here
         // not necessary for lab1
+    	int k=i / 8;
+    	i=i % 8;
+    	byte h=header[k];
+    	h=(byte) (h>>i);
+    	byte remain=(byte) (header[k]-(h<<i));
+    	header[k]=h;
+    	if (value) {
+    		header[k]=(byte) (header[k]|1);
+    	}
+    	else {
+    		header[k]=(byte) (header[k]&(byte)(-2));
+    	}
+    	header[k]=(byte) ((header[k]<<i)+remain);
     }
 
     /**
@@ -336,7 +370,7 @@ public class HeapPage implements Page {
 		@Override
 		public boolean hasNext() {
 			int k=no+1;
-			while (k<tuples.length && tuples[k]==null) ++k;
+			while (k<tuples.length && (tuples[k]==null || !isSlotUsed(k))) ++k;
 			if (k<tuples.length) return true;
 			return false;
 		}

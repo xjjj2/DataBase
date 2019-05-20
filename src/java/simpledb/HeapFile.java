@@ -89,6 +89,10 @@ public class HeapFile implements DbFile {
     public void writePage(Page page) throws IOException {
         // some code goes here
         // not necessary for lab1
+    	RandomAccessFile rf=new RandomAccessFile(file,"rw");
+    	rf.seek(page.getId().pageNumber()*BufferPool.getPageSize());
+    	rf.write(page.getPageData());
+    	rf.close();
     }
 
     /**
@@ -103,15 +107,42 @@ public class HeapFile implements DbFile {
     public ArrayList<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
-        return null;
+    	BufferPool bp=Database.getBufferPool();
+    	ArrayList<Page> dirty=new ArrayList<>();
+    	for (int i=0;i<numPages();++i) {
+    		HeapPage pg=(HeapPage) bp.getPage(tid, new HeapPageId(getId(),i), Permissions.READ_WRITE);
+    		if (pg.getNumEmptySlots()!=0) {
+    			pg.insertTuple(t);
+    			dirty.add(pg);
+    			pg.markDirty(true, tid);
+    			return dirty;
+    		}
+    	}
+    	HeapPageId pid=new HeapPageId(getId(),numPages());
+    	RandomAccessFile rf = new RandomAccessFile(file, "rw");
+    	rf.seek(BufferPool.getPageSize()*numPages());
+    	rf.write(new byte[BufferPool.getPageSize()]);
+    	rf.close();
+    	Database.getBufferPool().discardPage(pid);
+    	HeapPage pg=(HeapPage) bp.getPage(tid, pid, Permissions.READ_WRITE);
+    	pg.insertTuple(t);
+    	dirty.add(pg);
+		pg.markDirty(true, tid);
+        return dirty;
         // not necessary for lab1
     }
-
     // see DbFile.java for javadocs
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
         // some code goes here
-        return null;
+    	BufferPool bp=Database.getBufferPool();
+    	if (t.getRecordId().getPageId().getTableId()!=this.getId()) throw new DbException("error from heapfile delete tuple");
+    	ArrayList<Page> dirty=new ArrayList<>();
+    	HeapPage pg=(HeapPage) bp.getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
+    	pg.deleteTuple(t);
+    	dirty.add(pg);
+    	pg.markDirty(true, tid);
+        return dirty;
         // not necessary for lab1
     }
     public class HeapFileIterator implements DbFileIterator{

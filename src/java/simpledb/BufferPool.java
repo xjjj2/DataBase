@@ -178,8 +178,17 @@ public class BufferPool {
         // not necessary for lab1
     	ArrayList<Page> dirty=Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
     	for (Page pg:dirty) {
-    		if (!buffer.containsKey(pg.getId()))
+    		if (!buffer.containsKey(pg.getId())) {
     			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+    			if (buffer.size()<pagenum) {
+        			buffer.put(pg.getId(), new bufferunit(pg));
+        		}
+        		else {
+        			evictPage();
+        			// to evict page
+        			buffer.put(pg.getId(), new bufferunit(pg));
+        		}
+    		}
     		else buffer.get(pg.getId()).dirty=true;
     	}
     	
@@ -204,8 +213,17 @@ public class BufferPool {
         // not necessary for lab1
     	ArrayList<Page> dirty=Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
     	for (Page pg:dirty) {
-    		if (!buffer.containsKey(pg.getId()))
+    		if (!buffer.containsKey(pg.getId())) {
     			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+    			if (buffer.size()<pagenum) {
+        			buffer.put(pg.getId(), new bufferunit(pg));
+        		}
+        		else {
+        			evictPage();
+        			// to evict page
+        			buffer.put(pg.getId(), new bufferunit(pg));
+        		}
+    		}
     		else buffer.get(pg.getId()).dirty=true;
     	}
     }
