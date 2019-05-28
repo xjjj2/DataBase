@@ -1,9 +1,14 @@
 package simpledb;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
+
+import simpledb.TupleDesc.TDItem;
 
 /**
  * TableStats represents statistics (e.g., histograms) about base tables in a
@@ -76,7 +81,19 @@ public class TableStats {
      *            The cost per page of IO. This doesn't differentiate between
      *            sequential-scan IO and disk seeks.
      */
+    private List<Object> histogram;
+    private List<Integer> max;
+    private List<Integer> min;
+    private final int buckets=20;
+    private int tableid;
+    private int ioCostPerPage;
+    private int pageNum;
+    private int tupleNum;
+    private TupleDesc tpdc;
     public TableStats(int tableid, int ioCostPerPage) {
+    	this.tableid=tableid;
+    	this.ioCostPerPage=ioCostPerPage;
+    	tupleNum=0;
         // For this function, you'll have to get the
         // DbFile for the table in question,
         // then scan through its tuples and calculate
@@ -85,6 +102,79 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+    	DbFile db=Database.getCatalog().getDatabaseFile(tableid);
+    	DbFileIterator iter=db.iterator(new TransactionId());
+    	histogram=new ArrayList<>();
+    	tpdc=db.getTupleDesc();
+    	boolean setted=false;
+    	max=new ArrayList<>();
+    	min=new ArrayList<>();
+    	try {
+    		iter.open();
+			while (iter.hasNext()) {
+				++tupleNum;
+				Tuple tp=iter.next();
+				Iterator<Field> it=tp.fields();
+				int counter=0;
+				while (it.hasNext()) {
+					Field f=it.next();
+					if (!setted) {
+						if (f.getType()==Type.INT_TYPE) {
+							max.add(((IntField)f).getValue());
+							min.add(((IntField)f).getValue());
+						}
+						else {
+							max.add(null);
+							min.add(null);
+						}
+					}
+					else {
+						if (f.getType()==Type.INT_TYPE) {
+							if (((IntField)f).getValue()>max.get(counter)) max.set(counter, ((IntField)f).getValue());
+							if (((IntField)f).getValue()<min.get(counter)) min.set(counter, ((IntField)f).getValue());
+						}
+					}
+					++counter;
+				}
+				setted=true;
+				if (!iter.hasNext()) {
+					pageNum=tp.getRecordId().getPageId().pageNumber();
+				}
+			}
+			Iterator<TDItem> it=tpdc.iterator();
+			int counter=0;
+			while (it.hasNext()) {
+				TDItem item=it.next();
+				if (item.fieldType==Type.INT_TYPE) histogram.add(new IntHistogram(buckets,min.get(counter),max.get(counter)));
+				else histogram.add(new StringHistogram(buckets));
+				++counter;
+			}
+			iter.rewind();
+			while (iter.hasNext()) {
+				Tuple tp=iter.next();
+				Iterator<Field> it2=tp.fields();
+				counter=0;
+				while (it2.hasNext()) {
+					Field f=it2.next();
+					if (f.getType()==Type.INT_TYPE) {
+						((IntHistogram)histogram.get(counter)).addValue(((IntField)f).getValue());
+					}
+					else {
+						((StringHistogram)histogram.get(counter)).addValue(((StringField)f).getValue());
+					}
+					++counter;
+				}
+			}
+		} catch (NoSuchElementException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (DbException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (TransactionAbortedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
     }
 
     /**
@@ -101,7 +191,7 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+        return (pageNum+1)*this.ioCostPerPage;
     }
 
     /**
@@ -115,7 +205,7 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        return (int) (selectivityFactor*tupleNum);
     }
 
     /**
@@ -148,7 +238,11 @@ public class TableStats {
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
-        return 1.0;
+    	if (tpdc.getFieldType(field)==Type.INT_TYPE) {
+    		return ((IntHistogram)histogram.get(field)).estimateSelectivity(op, ((IntField)constant).getValue());
+    	}
+    	else return (((StringHistogram)histogram.get(field)).estimateSelectivity(op, ((StringField)constant).getValue()));
+        
     }
 
     /**
@@ -156,7 +250,7 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return tupleNum;
     }
 
 }

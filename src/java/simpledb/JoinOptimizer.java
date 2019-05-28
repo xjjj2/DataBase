@@ -111,7 +111,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            return card1*cost2+cost1+1;
         }
     }
 
@@ -155,8 +155,18 @@ public class JoinOptimizer {
             String field2PureName, int card1, int card2, boolean t1pkey,
             boolean t2pkey, Map<String, TableStats> stats,
             Map<String, Integer> tableAliasToId) {
-        int card = 1;
+        int card=card1*card2;
         // some code goes here
+    	if (joinOp==Predicate.Op.EQUALS) {
+    		if (t1pkey && card>card2) card=card2;
+    		if (t2pkey && card>card1) card=card1;
+    		if (!t1pkey && !t2pkey) {
+    			card=card1>card2?card1:card2;
+    		}
+    	}
+    	else {
+    		card=(int) (card*0.3);
+    	}
         return card <= 0 ? 1 : card;
     }
 
@@ -218,10 +228,28 @@ public class JoinOptimizer {
             HashMap<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
         //Not necessary for labs 1--3
-
+    	PlanCache opt=new PlanCache();
+    	for (int i=1;i<=joins.size();++i) {
+    		Set<Set<LogicalJoinNode>> subsets=this.enumerateSubsets(joins, i);
+    		for (Set<LogicalJoinNode> subset:subsets) {
+    			double cost=Double.POSITIVE_INFINITY;
+        		Vector<LogicalJoinNode> bestplan = null;
+        		int card = 0;
+    			for (LogicalJoinNode node:subset) {
+    				CostCard cc=this.computeCostAndCardOfSubplan(stats, filterSelectivities, node, subset, cost, opt);
+    				if (cc!=null) {
+    					cost=cc.cost;
+    					bestplan=cc.plan;
+    					card=cc.card;
+    				}
+    			}
+    			opt.addPlan(subset, cost, card, bestplan);
+    		}
+    		
+    	}
         // some code goes here
         //Replace the following
-        return joins;
+        return opt.getOrder(new HashSet<>(joins));
     }
 
     // ===================== Private Methods =================================

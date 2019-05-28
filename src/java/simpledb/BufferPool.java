@@ -180,14 +180,14 @@ public class BufferPool {
     	for (Page pg:dirty) {
     		if (!buffer.containsKey(pg.getId())) {
     			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
-    			if (buffer.size()<pagenum) {
+    			/*if (buffer.size()<pagenum) {
         			buffer.put(pg.getId(), new bufferunit(pg));
         		}
         		else {
         			evictPage();
         			// to evict page
         			buffer.put(pg.getId(), new bufferunit(pg));
-        		}
+        		}*/
     		}
     		else buffer.get(pg.getId()).dirty=true;
     	}
@@ -215,14 +215,14 @@ public class BufferPool {
     	for (Page pg:dirty) {
     		if (!buffer.containsKey(pg.getId())) {
     			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
-    			if (buffer.size()<pagenum) {
+    			/*if (buffer.size()<pagenum) {
         			buffer.put(pg.getId(), new bufferunit(pg));
         		}
         		else {
         			evictPage();
         			// to evict page
         			buffer.put(pg.getId(), new bufferunit(pg));
-        		}
+        		}*/
     		}
     		else buffer.get(pg.getId()).dirty=true;
     	}
