@@ -1,5 +1,6 @@
 package simpledb;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -102,8 +103,10 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+    	Transaction tr=new Transaction();
     	DbFile db=Database.getCatalog().getDatabaseFile(tableid);
-    	DbFileIterator iter=db.iterator(new TransactionId());
+    	DbFileIterator iter=db.iterator(tr.getId());
+    	tr.start();
     	histogram=new ArrayList<>();
     	tpdc=db.getTupleDesc();
     	boolean setted=false;
@@ -165,6 +168,7 @@ public class TableStats {
 					++counter;
 				}
 			}
+			tr.transactionComplete(false);
 		} catch (NoSuchElementException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -174,7 +178,11 @@ public class TableStats {
 		} catch (TransactionAbortedException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		}
+    	
     }
 
     /**

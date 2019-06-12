@@ -2,7 +2,15 @@ package simpledb;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.*;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -25,36 +33,239 @@ public class BufferPool {
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
-
+    private ReentrantLock tuplelock=new ReentrantLock(true);
+    private ReentrantLock tuplelock2=new ReentrantLock(true);
+    private ReentrantLock cyclelock=new ReentrantLock(true);
+    public int abortcounter=0;
+    public List<TransactionId> abortlist=new ArrayList<>();
+    public List<TransactionId> commitlist=new ArrayList<>(); 
+    private class pagelockwrapper{
+    	public pagelockwrapper(PageId pid, boolean write) {
+			super();
+			this.pid = pid;
+			this.write = write;
+		}
+		private PageId pid;
+    	private boolean write;
+    }
+    private ConcurrentHashMap<TransactionId,pagelockwrapper> TransactionAcquiring=new ConcurrentHashMap<>();
+    private class readwritelock{
+    	private ReentrantLock writelock;
+    	private Map<TransactionId,Boolean> readtid;
+    	private TransactionId writetid;
+    	private ReentrantLock LockGetting;
+    	private AtomicInteger counter;
+    	private PageId pid;
+    	private AtomicInteger status; //1 true 0 false -1 null
+    	private ReentrantLock WriteLockGetting;
+    	private ReentrantLock WriteLockReleasing;
+    	public readwritelock(PageId pid){
+    		writelock=new ReentrantLock(true);
+    		writetid=null;
+    		LockGetting=new ReentrantLock(true);
+    		counter=new AtomicInteger(0);
+    		this.pid=pid;
+     		readtid=new ConcurrentHashMap<>();
+     		status=new AtomicInteger(-1);
+     		WriteLockGetting=new ReentrantLock(true);
+     		WriteLockReleasing=new ReentrantLock(true);
+    	}
+    	public ReentrantLock writeLock() {
+    		return writelock;
+    	}
+    	public void acqforReadLock(TransactionId tid) throws TransactionAbortedException {
+    		WriteLockReleasing.lock();
+    		if (tid==writetid && status.get()==1) {WriteLockReleasing.unlock();return;}
+    		WriteLockReleasing.unlock();
+    		boolean temp2=BufferPool.this.cycleDetection(tid, pid, false);
+			if (!temp2) {
+				throw new TransactionAbortedException();
+			}
+    		while (true) {
+    			LockGetting.lock();
+    			boolean temp=BufferPool.this.cycleDetection(tid, pid, false);
+    			if (!temp) {
+    				LockGetting.unlock();
+    				throw new TransactionAbortedException();
+    			}
+    			int n=0;
+    			while (n<1000000000&&status.get()==1&&tid!=writetid) ++n;
+    			writelock.lock();
+    			if (status.get()==1&&tid!=writetid) {
+    				writelock.unlock();
+    				LockGetting.unlock();
+    				continue;
+    			}
+    			if (status.get()!=-1 && readtid.containsKey(tid)) {
+    				TransactionAcquiring.remove(tid);
+    				writelock.unlock();
+    				LockGetting.unlock();
+    				break;
+    			}
+    			if (!(status.get()==1)) {
+    				if (counter.incrementAndGet()==1 && tid!=writetid) {writetid=tid;}
+    				status.set(0);
+    			}
+    			readtid.put(tid,true);
+    			TransactionAcquiring.remove(tid);
+    			writelock.unlock();
+    			LockGetting.unlock();
+    			break;
+    		}
+    	}
+    	public void acqforWriteLock(TransactionId tid) throws TransactionAbortedException {
+//    		if (tid==writetid) return;
+    		// TODO acquire a writelock when readlock is only acquiried by this transaction may cause a bug
+    		WriteLockReleasing.lock();
+    		if (tid==writetid && status.get()==1) {WriteLockReleasing.unlock();return;}
+    		WriteLockReleasing.unlock();
+    		LockGetting.lock();
+    		if (tid==writetid && counter.get()==1) {status.set(1);counter.set(0);readtid.remove(tid);LockGetting.unlock();return;}
+    		LockGetting.unlock();
+    		boolean temp2=BufferPool.this.cycleDetection(tid, pid, true);
+			if (!temp2) {
+				throw new TransactionAbortedException();
+			}
+    		while (true) {
+    			WriteLockGetting.lock();
+    			boolean temp=BufferPool.this.cycleDetection(tid, pid, true);
+    			if (!temp) {
+    				WriteLockGetting.unlock();
+    				throw new TransactionAbortedException();
+    			}
+    			int n=0;
+    			while (n<1000000000&&status.get()!=-1&&(status.get()==1&&tid!=writetid||status.get()==0&&!(tid==writetid&&counter.get()==1))) ++n;
+    /*			if (n>=1000000000){
+    				WriteLockGetting.unlock();
+    				throw new TransactionAbortedException();
+    			}*/
+    			writelock.lock();
+    			if (status.get()!=-1&&(status.get()==1&&tid!=writetid||status.get()==0&&!(tid==writetid&&counter.get()==1))) {
+    				writelock.unlock();
+    				WriteLockGetting.unlock();
+    				continue;
+    			}
+    			if (status.get()==-1) {
+    				status.set(1);
+    			}
+    			else {
+    				status.set(1);
+    				counter.set(0);
+    				readtid.remove(tid);
+    			}
+    			TransactionAcquiring.remove(tid);
+    			writetid=tid;
+    			writelock.unlock();
+    			WriteLockGetting.unlock();
+    			break;
+    		}
+    	}
+    	public void releaseReadLock(TransactionId tid) {
+    		LockGetting.lock();
+    		readtid.remove(tid);
+    		if (counter.decrementAndGet()==0) {
+    			writetid=null;
+    			status.set(-1);
+    		}
+    		else if (counter.get()==1) {
+    			for (TransactionId td:readtid.keySet())
+    				writetid=td;
+    		}
+     		LockGetting.unlock();
+    	}
+    	public void releaseWriteLock(TransactionId tid) {
+    		WriteLockReleasing.lock();
+    		writetid=null;
+    		status.set(-1);
+    		WriteLockReleasing.unlock();
+    	}
+    	public void clear(TransactionId tid) {
+    		writetid=null;
+    		counter.set(0);
+    		status.set(-1);
+    	}
+    }
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
      * @param numPages maximum number of pages in this buffer pool.
      */
     
+    private boolean cycleDetection(TransactionId tid, PageId pid, boolean write) {
+    	cyclelock.lock();
+    	TransactionAcquiring.put(tid, new pagelockwrapper(pid,write));
+    	boolean temp=false;
+    	int depth = 0;
+    	try {
+    		temp=DetectionDfs(tid,tid,depth);
+    	}
+    	catch (Throwable e){
+    		temp=false;
+    	}
+    	cyclelock.unlock();
+    	return temp;
+    }
+    private boolean DetectionDfs(TransactionId nowtid,TransactionId tid,int depth) throws Throwable {
+    	if (nowtid==null) return true;
+    	depth++;
+    	if (depth>=1000) throw new Throwable();
+    	if (!TransactionAcquiring.containsKey(nowtid)) return true;
+    	pagelockwrapper pl=TransactionAcquiring.get(nowtid);
+    	PageId pid=pl.pid;
+    	boolean write=pl.write;
+    	readwritelock lock=lockmap.get(pid);
+    	if (write) {
+    		if (lock.status.get()==-1) return true;
+    		if (lock.status.get()==1) {
+    			if (nowtid==lock.writetid) return true;
+    			if (tid==lock.writetid) return false;
+    			return DetectionDfs(lock.writetid,tid,depth);
+    		}
+    		else {
+    			for (TransactionId tranid:lock.readtid.keySet()) {
+    				if (nowtid==tranid) continue;
+    				if (tranid==tid) return false;
+    				if (!DetectionDfs(tranid,tid,depth)) return false;
+    			}
+    		}
+    	}
+    	else {
+    		if (lock.status.get()==-1) return true;
+    		if (lock.status.get()==1) {
+    			if (nowtid==lock.writetid) return true;
+    			if (tid!=lock.writetid) {
+    				return DetectionDfs(lock.writetid,tid,depth+1);
+    			}
+    			else return false;
+    		}
+    	}
+    	return true;
+    }
     private class bufferunit{
     	Page page;
     	int pin;
     	boolean dirty;
-    	boolean lock;
+    	Lock lock;
     	public bufferunit() {
     		pin=0;
     		dirty=false;
-    		lock=false;
     	}
     	public bufferunit(Page pg) {
     		pin=0;
     		dirty=false;
-    		lock=false;
     		page=pg;
     	}
     }
     private ConcurrentHashMap<PageId,bufferunit> buffer;
+    private ConcurrentHashMap<PageId,readwritelock> lockmap;
+    private ConcurrentHashMap<TransactionId,Map<PageId,Boolean>> transhold;
     private int pagenum;
     public BufferPool(int numPages) {
         // some code goes here
     	buffer=new ConcurrentHashMap<>();
     	pagenum=numPages;
+    	lockmap=new ConcurrentHashMap<>();
+    	transhold=new ConcurrentHashMap<>();
     }
     
     public static int getPageSize() {
@@ -70,7 +281,7 @@ public class BufferPool {
     public static void resetPageSize() {
     	BufferPool.pageSize = PAGE_SIZE;
     }
-
+    
     /**
      * Retrieve the specified page with the associated permissions.
      * Will acquire a lock and may block if that lock is held by another
@@ -88,28 +299,40 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
+    	synchronized (this) {if (!lockmap.containsKey(pid)) {
+    		lockmap.put(pid, new readwritelock(pid));
+    	}
+    	}
+    	readwritelock lock=lockmap.get(pid);
+    	if (perm==perm.READ_ONLY) lock.acqforReadLock(tid); 
+    	else lock.acqforWriteLock(tid);
+    	if (!transhold.containsKey(tid)) transhold.put(tid, new ConcurrentHashMap<>());
+    	transhold.get(tid).put(pid,perm==perm.READ_WRITE);
+    	Page ret;
     	Catalog cata=Database.getCatalog();
     	if (buffer.containsKey(pid)) {
     		 bufferunit unit=buffer.get(pid);
- //   		 if (!unit.lock) {unit.lock=true;return unit.page;}
-    		 return unit.page;
+    		 ret=unit.page;
     	}
     	else {
     		if (buffer.size()<pagenum) {
     			DbFile db=cata.getDatabaseFile(pid.getTableId());
     			Page pg=db.readPage(pid);
     			buffer.put(pid, new bufferunit(pg));
-    			return pg;
+    			ret=pg;
     		}
     		else {
-    			evictPage();
+    			boolean ev=evictPage();
     			// to evict page
     			DbFile db=cata.getDatabaseFile(pid.getTableId());
     			Page pg=db.readPage(pid);
     			buffer.put(pid, new bufferunit(pg));
-    			return pg;
+    			ret=pg;
     		}
     	}
+/*    	if (perm==perm.READ_ONLY) lock.readLock().unlock();
+    	else lock.writeLock().unlock();*/
+    	return ret;
         // some code goes here
     }
 
@@ -122,8 +345,11 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param pid the ID of the page to unlock
      */
-    public  void releasePage(TransactionId tid, PageId pid) {
-        // some code goes here
+    public synchronized void releasePage(TransactionId tid, PageId pid) {
+    	if (!lockmap.containsKey(pid)) return;
+    	readwritelock lock=lockmap.get(pid);
+    	lock.clear(tid);
+    	// some code goes here
         // not necessary for lab1|lab2
     }
 
@@ -135,13 +361,24 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+    	commitlist.add(tid);
+		flushPages(tid);
+    	TransactionAcquiring.remove(tid);
+    	if (transhold.containsKey(tid))
+        for (PageId pid:transhold.get(tid).keySet()) {
+        	readwritelock lock=lockmap.get(pid);
+        	if (lock.readtid.containsKey(tid)) lock.releaseReadLock(tid);
+        	if (lock.counter.get()==0&&lock.writetid==tid) lock.releaseWriteLock(tid);
+        }
+    	 transhold.remove(tid);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+    	if (!transhold.containsKey(tid)) return false;
+        return transhold.get(tid).containsKey(p);
     }
 
     /**
@@ -151,8 +388,27 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param commit a flag indicating whether we should commit or abort
      */
-    public void transactionComplete(TransactionId tid, boolean commit)
+    public synchronized void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
+    	if (commit) {
+    		transactionComplete(tid);
+    	}
+    	else {
+    		++abortcounter;
+    		abortlist.add(tid);
+    		for (PageId pid:transhold.get(tid).keySet()) {
+    			discardPage(pid);
+    		}
+    		TransactionAcquiring.remove(tid);
+        	if (transhold.containsKey(tid))
+            for (PageId pid:transhold.get(tid).keySet()) {
+            	readwritelock lock=lockmap.get(pid);
+            	if (lock.readtid.containsKey(tid)) lock.releaseReadLock(tid);
+            	if (lock.counter.get()==0&&lock.writetid==tid) lock.releaseWriteLock(tid);
+            }
+        	 transhold.remove(tid);
+    	}
+       
         // some code goes here
         // not necessary for lab1|lab2
     }
@@ -189,7 +445,7 @@ public class BufferPool {
         			buffer.put(pg.getId(), new bufferunit(pg));
         		}*/
     		}
-    		else buffer.get(pg.getId()).dirty=true;
+    		else {buffer.get(pg.getId()).dirty=true;pg.markDirty(true, tid);}
     	}
     	
     }
@@ -224,7 +480,7 @@ public class BufferPool {
         			buffer.put(pg.getId(), new bufferunit(pg));
         		}*/
     		}
-    		else buffer.get(pg.getId()).dirty=true;
+    		else {buffer.get(pg.getId()).dirty=true;pg.markDirty(true, tid);}
     	}
     }
 
@@ -252,14 +508,10 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
-    	try {
-			flushPage(pid);
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-    	buffer.remove(pid);
-    	// TODO maybe a flush
+        if (!buffer.containsKey(pid)) return;
+        bufferunit unit=buffer.get(pid);
+        unit.page.markDirty(false, null);
+    	if (buffer.containsKey(pid)) buffer.remove(pid);
     }
 
     /**
@@ -269,10 +521,10 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
     	if (!buffer.containsKey(pid)) return;
     	bufferunit unit=buffer.get(pid);
-    	if (unit.pin>0||unit.lock) return;
-    	if (unit.dirty) {
+    	if (unit.dirty || unit.page.isDirty()!=null) {
     		Page pg=unit.page;
     		Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+    		pg.markDirty(false, null);
     	}
     	unit.dirty=false;
         // some code goes here
@@ -283,6 +535,10 @@ public class BufferPool {
      */
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
+    	if (!transhold.containsKey(tid)) return;
+    	for (PageId pgid:transhold.get(tid).keySet()) {
+    		flushPage(pgid);
+    	}
         // not necessary for lab1|lab2
     }
 
@@ -290,16 +546,26 @@ public class BufferPool {
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
-    private synchronized  void evictPage() throws DbException {
+    private synchronized  boolean evictPage() throws DbException {
+    	// if fail to evict a page return false
     	PageId pidar[]=new PageId[pagenum];
     	buffer.keySet().toArray(pidar);
+    	
     	int rn=(int)(Math.random()*pagenum);
     	try {
-			flushPage(pidar[rn]);
+    		for (int i=rn;i<rn+pagenum;++i) {
+    			PageId pgid=pidar[i % pagenum];
+    			bufferunit unit=buffer.get(pgid);
+    			if (unit.dirty||unit.page.isDirty()!=null) continue;
+    			flushPage(pidar[i%pagenum]);
+    			buffer.remove(pidar[i%pagenum]);
+    			return true;
+    		}
 		} catch (IOException e) {
 			throw new DbException("error when evict page");
 		}
-    	buffer.remove(pidar[rn]);
+
+    	throw new DbException("no page to evict");
         // some code goes here
         // not necessary for lab1
     }
