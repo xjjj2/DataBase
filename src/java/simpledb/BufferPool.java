@@ -435,7 +435,10 @@ public class BufferPool {
     	ArrayList<Page> dirty=Database.getCatalog().getDatabaseFile(tableId).insertTuple(tid, t);
     	for (Page pg:dirty) {
     		if (!buffer.containsKey(pg.getId())) {
-    			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+ //   			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+    			if (pagenum<=buffer.size()) evictPage();
+    			buffer.put(pg.getId(), new bufferunit(pg));
+    			buffer.get(pg.getId()).dirty=true;pg.markDirty(true, tid);
     			/*if (buffer.size()<pagenum) {
         			buffer.put(pg.getId(), new bufferunit(pg));
         		}
@@ -470,7 +473,10 @@ public class BufferPool {
     	ArrayList<Page> dirty=Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId()).deleteTuple(tid, t);
     	for (Page pg:dirty) {
     		if (!buffer.containsKey(pg.getId())) {
-    			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+//    			Database.getCatalog().getDatabaseFile(pg.getId().getTableId()).writePage(pg);
+    			if (pagenum<=buffer.size()) evictPage();
+    			buffer.put(pg.getId(), new bufferunit(pg));
+    			buffer.get(pg.getId()).dirty=true;pg.markDirty(true, tid);
     			/*if (buffer.size()<pagenum) {
         			buffer.put(pg.getId(), new bufferunit(pg));
         		}
