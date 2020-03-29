@@ -1,2 +1,0 @@
-data (f1 int, f2 int)
-data2 (f1 int, f2 int)
